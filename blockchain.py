@@ -12,9 +12,19 @@ class Block:
         return sha512(str.encode(x)).hexdigest()
 
     #takes an object and returns hash of its contents
+    #does not work when object has nonprimitive attributes except for Block
     @staticmethod
     def hash_obj(x):
-        return Block.hash(str(vars(x)))
+        if not hasattr(x,'__dict__'):
+            return Block.hash(str(x))
+        attributes=str(vars(x))
+        if isinstance(x,Block):
+            for item in x.data:
+                #hash each object in block's data
+                attributes+=Block.hash_obj(item)
+        return Block.hash(attributes)
+    
+    
     
     def __init__(self,info,previous_block):
         if previous_block is not None:
@@ -109,10 +119,10 @@ class Test:
 a=Test('red')
 b=Block(a,None)
 t1=b.getHash()
-print(t1)
+#print(t1)
 a.x='blue'
 t2=b.getHash()
-print(t2)
+#print(t2)
 print(t1==t2)
 
 '''
