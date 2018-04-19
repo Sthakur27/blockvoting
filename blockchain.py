@@ -2,7 +2,7 @@ from hashlib import sha512
 
 class Block:    
     hashpointer=None   #assigned in form of (pointer,hash) of previous block   
-    data=set()    
+    data=list()    
     block_num=0
     
     #input is string x
@@ -22,7 +22,7 @@ class Block:
             self.block_num=previous_block.block_num+1
         if not isinstance(info,list):
             info=[info]
-        self.data=set(info)
+        self.data=info
 
     #returns the previous block it points to if that block's hash is the same as the one recorded
     def getPrevious(self):
@@ -102,7 +102,18 @@ class BlockChain:
         response+=str(temp)
         return response
     
-        
+class Test:
+    def __init__(self,x):
+        self.x=x
+
+a=Test('red')
+b=Block(a,None)
+t1=b.getHash()
+print(t1)
+a.x='blue'
+t2=b.getHash()
+print(t2)
+print(t1==t2)
 
 '''
 a=Block(['cat','dog'],None)
