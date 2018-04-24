@@ -43,31 +43,33 @@ class Node:
 
         send_msg_t=threading.Thread(target=self.send_msg)
         recieve_msg_t=threading.Thread(target=self.recieve_msg)
+        heart_beat_t=threading.Thread(target=self.heart_beat)
 
 
         self.main_threads.append(send_msg_t)
         self.main_threads.append(recieve_msg_t)
+        self.main_threads.append(heart_beat_t)
         
         for t in self.main_threads:
             t.start()
 
     class MyTCPHandler(socketserver.BaseRequestHandler):
         """
-        The request handler class for our server.
+        The request handler class for  server.
 
-        It is instantiated once per connection to the server, and must
-        override the handle() method to implement communication to the
-        client.
+        It is instantiated once per connection to the server
         """
 
         def handle(self):
             data_and_label = str(self.request.recv(1024).strip(),"utf-8")
-            print("Undecoded msg: {}".format(data_and_label))
             label=data_and_label[0]
-            data=json.loads(data_and_label[1:])
-            print("\nrecieving a msg".format(self.node.name))
+            data=data_and_label[1:]
+            print("\nrecieving a msg")
             print("{}:{} wrote: {}".format(self.client_address[0],self.client_address[1],data))
-            if label=='1':
+            if label=='h':
+                print("Recieved Heart Beat")
+                self.last_msg=time.time()
+            elif label=='1':
                 self.recieve_msg(data)
             elif label=='2':
                 self.vote_and_tally()
@@ -76,14 +78,16 @@ class Node:
                 self.recieve_cmd(data)
             elif label=='4':
                 #for connecting with new nodes
+                data=json.loads(data)
                 self.node.connect(data)
             elif label=='5':
                 #for recieving new node's first connection
+                data=json.loads(data)
                 self.node.first_connect(data)
             elif label=='6':
                 #for recieving multiple contact cards
-                print('added new contacts')
-                print('contacting new contacts')
+                data=json.loads(data)
+                print('added new contacts and contacting new contacts')
                 print(data)
                 for address in data:
                     self.node.send(address,'4',[self.node.host,self.node.port])
@@ -95,8 +99,7 @@ class Node:
                 print("My contacts: {}".format(self.node.contacts))
                 
             else:
-                #acknowledgment or error
-                print(data)
+                pass
                 
     def recieve_msg(self):
         #socket set up
@@ -109,21 +112,23 @@ class Node:
         
     def send_msg(self):
         while True:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                #print('checking if msgs to be send')
-                if len(self.send_q)>0:
-                    # Connect to server and send data
-                    print("Current send queue: {}".format(self.send_q))
-                    print('\nsending a msg to {}:{}'.format(self.send_q[0][0], self.send_q[0][1]))
-                    sock.connect((self.send_q[0][0], self.send_q[0][1]))
-                    sock.sendall(bytes(self.send_q[0][2] + "\n", "utf-8"))
-                    del(self.send_q[0])
+            if len(self.send_q)>0:
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                        # Connect to server and send data
+                        print('\nsending {} to {}:{}'.format(self.send_q[0][2],self.send_q[0][0], self.send_q[0][1]))
+                        sock.connect((self.send_q[0][0], self.send_q[0][1]))
+                        sock.sendall(bytes(self.send_q[0][2] + "\n", "utf-8"))
+                except:
+                    pass
+                del(self.send_q[0])
+                
     #for reciever
     def connect(self,contact):
         contact.append(time.time())
         self.contacts.append(contact)
         print('appended contact {}'.format(contact))
-        self.send(contact,'A',[self.host,self.port,'contact acknowledged'])
+        self.send(contact,'A',"{}:{} acknowledges contact".format(self.host,self.port))
 
     #for reciever
     def first_connect(self,address):
@@ -132,7 +137,7 @@ class Node:
         address.append(time.time())
         print(address)
         
-        print('returning contacts {}'.format(self.contacts))
+        #print('returning contacts {}'.format(self.contacts))
         self.send(address,'6',[self.leader]+self.contacts)
         
         print("Added new contact")
@@ -172,9 +177,10 @@ class Node:
         print("send msg '{}' to followers".format(data))
 
 
-    def send_all(self,msg):
+    #for leader
+    def send_all(self,label,msg):
         for follower in self.contacts:
-            self.seng_msg(msg,follower)
+            self.send(follower,label,msg)
         self.last_msg=time.time()
 
 
@@ -184,10 +190,8 @@ class Node:
         
         while True:
             if self.status=='leader':
-                time.sleep(0.5)
-                if time.time()-self.last_msg>2:
-                    send_all('')
-                    self.last_msg=time.time()
+                time.sleep(2.5)
+                self.send_all('h','')
 
 '''
 name=input('name?')
