@@ -13,7 +13,6 @@ class Node:
         self.host=HOST
         self.port=PORT      
         self.term=0
-        self.leader=self
         self.contacts=[]
         self.send_q=[]
 
@@ -25,11 +24,14 @@ class Node:
             contact_host,contact_port=contact.split(':')
             self.contacts.append([contact_host,int(contact_port),time.time()])
             self.send(self.contacts[0],'5',[self.host,self.port])
+            self.status='follower'
+        else:
+            self.leader=[self.host,self.port,time.time()]
+            self.status='leader'
 
             
         self.time_out=3+4*random.random()
-        self.vote=None
-        self.status='follower'
+        self.vote=None      
         self.logs=[]
         self.last_msg=time.time()
         self.cmd=''
@@ -60,6 +62,7 @@ class Node:
 
         def handle(self):
             data_and_label = str(self.request.recv(1024).strip(),"utf-8")
+            print("Undecoded msg: {}".format(data_and_label))
             label=data_and_label[0]
             data=json.loads(data_and_label[1:])
             print("\nrecieving a msg".format(self.node.name))
@@ -73,7 +76,7 @@ class Node:
                 self.recieve_cmd(data)
             elif label=='4':
                 #for connecting with new nodes
-                self.connect(data)
+                self.node.connect(data)
             elif label=='5':
                 #for recieving new node's first connection
                 self.node.first_connect(data)
@@ -81,12 +84,15 @@ class Node:
                 #for recieving multiple contact cards
                 print('added new contacts')
                 print('contacting new contacts')
+                print(data)
                 for address in data:
-                    self.node.send(address,'4',[self.host,self.port])
+                    self.node.send(address,'4',[self.node.host,self.node.port])
+                self.node.leader=data[0]
+                data=data[1:]
                 if len(data)>0:
                     self.node.contacts=self.node.contacts+data
-                
-                print(self.node.contacts)
+                print("Leader: {}".format(self.node.leader))
+                print("My contacts: {}".format(self.node.contacts))
                 
             else:
                 #acknowledgment or error
@@ -95,9 +101,6 @@ class Node:
     def recieve_msg(self):
         #socket set up
         with socketserver.TCPServer((self.host, self.port), Node.MyTCPHandler) as server:
-            #print(vars(server))
-            #self.host,self.port=server.server_address
-            #print(self.host,self.port)
             server.RequestHandlerClass.node=self
             server.serve_forever()
                 
@@ -110,17 +113,17 @@ class Node:
                 #print('checking if msgs to be send')
                 if len(self.send_q)>0:
                     # Connect to server and send data
+                    print("Current send queue: {}".format(self.send_q))
                     print('\nsending a msg to {}:{}'.format(self.send_q[0][0], self.send_q[0][1]))
                     sock.connect((self.send_q[0][0], self.send_q[0][1]))
                     sock.sendall(bytes(self.send_q[0][2] + "\n", "utf-8"))
                     del(self.send_q[0])
-
-    def connect(self,address):
-        contact=address
+    #for reciever
+    def connect(self,contact):
         contact.append(time.time())
         self.contacts.append(contact)
         print('appended contact {}'.format(contact))
-        self.send(contact,'','contact acknowledged by {}:{}'.format(self.host,self.port))
+        self.send(contact,'A',[self.host,self.port,'contact acknowledged'])
 
     #for reciever
     def first_connect(self,address):
@@ -130,7 +133,7 @@ class Node:
         print(address)
         
         print('returning contacts {}'.format(self.contacts))
-        self.send(address,'6',self.contacts)
+        self.send(address,'6',[self.leader]+self.contacts)
         
         print("Added new contact")
         self.contacts.append(address)
