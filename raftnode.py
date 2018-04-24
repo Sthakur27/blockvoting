@@ -22,11 +22,12 @@ class Node:
         
         if contact is not None:
             contact_host,contact_port=contact.split(':')
-            self.contacts.append([contact_host,int(contact_port),time.time()])
-            self.send(self.contacts[0],'5',[self.host,self.port])
+            self.send([contact_host,int(contact_port)],'LS',[self.host,self.port])
             self.status='follower'
+            self.leader=None
         else:
             self.leader=[self.host,self.port,time.time()]
+            self.contacts=[[self.host,self.port,time.time()]]
             self.status='leader'
 
             
@@ -43,12 +44,12 @@ class Node:
 
         send_msg_t=threading.Thread(target=self.send_msg)
         recieve_msg_t=threading.Thread(target=self.recieve_msg)
-        heart_beat_t=threading.Thread(target=self.heart_beat)
+        idle_time_out_t=threading.Thread(target=self.idle_time_out)
 
 
         self.main_threads.append(send_msg_t)
         self.main_threads.append(recieve_msg_t)
-        self.main_threads.append(heart_beat_t)
+        self.main_threads.append(idle_time_out_t)
         
         for t in self.main_threads:
             t.start()
@@ -62,40 +63,37 @@ class Node:
 
         def handle(self):
             data_and_label = str(self.request.recv(1024).strip(),"utf-8")
-            label=data_and_label[0]
-            data=data_and_label[1:]
-            print("\nrecieving a msg")
-            print("{}:{} wrote: {}".format(self.client_address[0],self.client_address[1],data))
-            if label=='h':
+            label=data_and_label[:2]
+            data=data_and_label[2:]
+            #print("\nrecieving a msg")
+            #print("{}:{} wrote: {}".format(self.client_address[0],self.client_address[1],data))
+            if label=='HS':
                 print("Recieved Heart Beat")
                 self.last_msg=time.time()
-            elif label=='1':
-                self.recieve_msg(data)
-            elif label=='2':
-                self.vote_and_tally()
-            elif label=='3':
-                #for leader
-                self.recieve_cmd(data)
-            elif label=='4':
-                #for connecting with new nodes
+                
+            #leader info recieve/send
+            elif label=='LS':
                 data=json.loads(data)
-                self.node.connect(data)
-            elif label=='5':
-                #for recieving new node's first connection
+                self.node.send(data,'LR',self.node.leader)
+                
+            elif label=='LR':
+                #new node receiving leader info from follower
                 data=json.loads(data)
-                self.node.first_connect(data)
-            elif label=='6':
+                self.node.leader=data
+                self.node.send(self.node.leader,'AS',[self.node.host,self.node.port])
+                
+            elif label=='AS':
+                data=json.loads(data)
+                #leader recieving a rqst from new node to be added to network
+                self.node.add_contact(data)
+                self.node.send_all('AR',self.node.contacts)
+
+            #all contacts recieve
+            elif label=='AR':
                 #for recieving multiple contact cards
                 data=json.loads(data)
-                print('added new contacts and contacting new contacts')
-                print(data)
-                for address in data:
-                    self.node.send(address,'4',[self.node.host,self.node.port])
-                self.node.leader=data[0]
-                data=data[1:]
-                if len(data)>0:
-                    self.node.contacts=self.node.contacts+data
-                print("Leader: {}".format(self.node.leader))
+                print('updating contacts')
+                self.node.contacts=data
                 print("My contacts: {}".format(self.node.contacts))
                 
             else:
@@ -108,7 +106,8 @@ class Node:
             server.serve_forever()
                 
     def send(self,contact,label,msg):
-        self.send_q.append([contact[0],contact[1],label+json.dumps(msg)])
+        if len(label)==2:
+            self.send_q.append([contact[0],contact[1],label+json.dumps(msg)])
         
     def send_msg(self):
         while True:
@@ -116,33 +115,23 @@ class Node:
                 try:
                     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                         # Connect to server and send data
-                        print('\nsending {} to {}:{}'.format(self.send_q[0][2],self.send_q[0][0], self.send_q[0][1]))
+                        #print('\nsending {} to {}:{}'.format(self.send_q[0][2],self.send_q[0][0], self.send_q[0][1]))
                         sock.connect((self.send_q[0][0], self.send_q[0][1]))
                         sock.sendall(bytes(self.send_q[0][2] + "\n", "utf-8"))
                 except:
                     pass
                 del(self.send_q[0])
                 
-    #for reciever
-    def connect(self,contact):
-        contact.append(time.time())
-        self.contacts.append(contact)
-        print('appended contact {}'.format(contact))
-        self.send(contact,'A',"{}:{} acknowledges contact".format(self.host,self.port))
-
-    #for reciever
-    def first_connect(self,address):
-        print("recieving contact card:")
-        #print("address {}".format(address))
-        address.append(time.time())
-        print(address)
-        
-        #print('returning contacts {}'.format(self.contacts))
-        self.send(address,'6',[self.leader]+self.contacts)
-        
-        print("Added new contact")
-        self.contacts.append(address)
-        return
+    #for leader
+    def add_contact(self,address):
+        host,port=address
+        unique=True
+        for i in range(0,len(self.contacts)):
+            if self.contacts[i][0]==host and self.contacts[i][1]==port:
+                self.contacts[i][2]=time.time()
+                unique=False
+        if(unique):
+            self.contacts.append([host,port,time.time()])
     
     def campaign(self):
         while True:
@@ -186,12 +175,21 @@ class Node:
 
 
 
-    def heart_beat(self):
+    def idle_time_out(self):
         
         while True:
             if self.status=='leader':
+                #send heart beat
                 time.sleep(2.5)
-                self.send_all('h','')
+                print(self.contacts)
+                self.send_all('HS','')
+            elif self.status=='follower':
+                #wait and campaign
+                if time.time()-self.last_msg>=self.time_out:
+                    #campaign
+                    pass
+                else:
+                    time.sleep(1)
 
 '''
 name=input('name?')
