@@ -8,7 +8,8 @@ import socket
 
         
 class Node:
-    def __init__(self,contact=None,HOST="localhost",PORT=9999):
+    def __init__(self,contact=None,HOST="localhost",PORT=9999,name=''):
+        self.name=name
         self.host=HOST
         self.port=PORT      
         self.term=0
@@ -18,12 +19,12 @@ class Node:
 
         
         
-        print('hello?')
+        print('\nnode {} instansiated on {}:{}\n'.format(self.name,self.host,self.port))
         
         if contact is not None:
             contact_host,contact_port=contact.split(':')
             self.contacts.append([contact_host,int(contact_port),time.time()])
-            self.send(self.contacts[0],'5')
+            self.send(self.contacts[0],'5',[self.host,self.port])
 
             
         self.time_out=3+4*random.random()
@@ -40,18 +41,10 @@ class Node:
 
         send_msg_t=threading.Thread(target=self.send_msg)
         recieve_msg_t=threading.Thread(target=self.recieve_msg)
-        #camp_t=threading.Thread(target=self.campaign)
-        #rec_msg_t=threading.Thread(target=self.recieve_msg)
-        #heart_beat_t=threading.Thread(target=self.heart_beat)
-        #recieve_cmd_t=threading.Thread(target=self.recieve_cmd)
 
 
         self.main_threads.append(send_msg_t)
         self.main_threads.append(recieve_msg_t)
-        #self.main_threads.append(camp_t)
-        #self.main_threads.append(rec_msg_t)
-        #self.main_threads.append(heart_beat_t)
-        #self.main_threads.append(recieve_cmd_t)
         
         for t in self.main_threads:
             t.start()
@@ -64,25 +57,37 @@ class Node:
         override the handle() method to implement communication to the
         client.
         """
-        def __init__(self,node):
-            self.node=node
 
         def handle(self):
-            data = str(self.request.recv(1024).strip(),"utf-8")
-            print("{} wrote: {}".format(self.client_address[0],data))
-            if data[0]=='1':
+            data_and_label = str(self.request.recv(1024).strip(),"utf-8")
+            label=data_and_label[0]
+            data=json.loads(data_and_label[1:])
+            print("\nrecieving a msg".format(self.node.name))
+            print("{}:{} wrote: {}".format(self.client_address[0],self.client_address[1],data))
+            if label=='1':
                 self.recieve_msg(data)
-            elif data[0]=='2':
+            elif label=='2':
                 self.vote_and_tally()
-            elif data[0]=='3':
+            elif label=='3':
                 #for leader
                 self.recieve_cmd(data)
-            elif data[0]=='4':
+            elif label=='4':
                 #for connecting with new nodes
-                self.connect(self.client_address)
-            elif data[0]=='5':
-                #for new node's first connection
-                node.first_connect(self.client_address)
+                self.connect(data)
+            elif label=='5':
+                #for recieving new node's first connection
+                self.node.first_connect(data)
+            elif label=='6':
+                #for recieving multiple contact cards
+                print('added new contacts')
+                print('contacting new contacts')
+                for address in data:
+                    self.node.send(address,'4',[self.host,self.port])
+                if len(data)>0:
+                    self.node.contacts=self.node.contacts+data
+                
+                print(self.node.contacts)
+                
             else:
                 #acknowledgment or error
                 print(data)
@@ -90,17 +95,22 @@ class Node:
     def recieve_msg(self):
         #socket set up
         with socketserver.TCPServer((self.host, self.port), Node.MyTCPHandler) as server:
+            #print(vars(server))
+            #self.host,self.port=server.server_address
+            #print(self.host,self.port)
+            server.RequestHandlerClass.node=self
             server.serve_forever()
                 
-    def send(self,contact,msg):
-        self.send_q.append([contact[0],contact[1],msg])
+    def send(self,contact,label,msg):
+        self.send_q.append([contact[0],contact[1],label+json.dumps(msg)])
         
     def send_msg(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            while True:
+        while True:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 #print('checking if msgs to be send')
                 if len(self.send_q)>0:
                     # Connect to server and send data
+                    print('\nsending a msg to {}:{}'.format(self.send_q[0][0], self.send_q[0][1]))
                     sock.connect((self.send_q[0][0], self.send_q[0][1]))
                     sock.sendall(bytes(self.send_q[0][2] + "\n", "utf-8"))
                     del(self.send_q[0])
@@ -110,14 +120,21 @@ class Node:
         contact.append(time.time())
         self.contacts.append(contact)
         print('appended contact {}'.format(contact))
-        self.send_q.append([contact[0],contact[1],'ack'])
+        self.send(contact,'','contact acknowledged by {}:{}'.format(self.host,self.port))
 
+    #for reciever
     def first_connect(self,address):
-        print("address {}".format(address))
-        contact=address
-        self.contacts.append(contact)
+        print("recieving contact card:")
+        #print("address {}".format(address))
+        address.append(time.time())
+        print(address)
         
         print('returning contacts {}'.format(self.contacts))
+        self.send(address,'6',self.contacts)
+        
+        print("Added new contact")
+        self.contacts.append(address)
+        return
     
     def campaign(self):
         while True:
@@ -169,11 +186,24 @@ class Node:
                     send_all('')
                     self.last_msg=time.time()
 
+'''
+name=input('name?')
+contact=input('contact?')
+if contact == '':
+    contact=None
+else:
+    contact='127.0.0.1:999'+contact
+port=int('999'+input('Port?'))
 
+mynode=Node(name=name,PORT=port,contact=contact)
 
-a=Node()
-print('a created')
-b=Node(PORT=9998,contact="localhost:9999")
+'''
+
+choice=int(input('node num'))
+if choice<=1:
+    mynode=Node(name=chr(96+choice),PORT=10000-choice,contact=None)
+else:
+    mynode=Node(name=chr(96+choice),PORT=10000-choice,contact='127.0.0.1:'+str(10001-choice))
 
     
 
